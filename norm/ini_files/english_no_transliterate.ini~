@@ -1,0 +1,45 @@
+[MOSES-PATH]
+Moses = /opt/mosesdecoder/bin/moses
+Mosesserver = /opt/mosesdecoder/bin/mosesserver
+
+#is used by NE module
+[CRF-PATH]
+CRF = /usr/bin/crf_test
+
+[SMT]
+
+#english
+Token=../static/Moses/decoder_files/SMT_token_ub_en.ini
+Unigram=../static/Moses/decoder_files/SMT_unigram_ub_en.ini
+Bigram=../static/Moses/decoder_files/SMT_bigram_ub_en.ini
+Decision=../static/Moses/decoder_files/decision_english_demo.ini
+
+#for english: bal, ask, twe, unb, you
+#for dutch: bal, unb, sms, sns, twe
+[SETTING]
+train_set=bal
+
+[LM]
+
+#english
+lm=../static/Moses/lm/language_model.en.tok.binary
+
+#order matters, list them space seperated
+#all: Word_Split, Compound, Original Abbreviation, SMT_Token, SMT_Unigram, SMT_Bigram, SMT_Cascaded, Transliterate, Hunspell, Empty, NE_new, Phonemic
+[Modules]
+#en
+mod= Word_Split Compound Original Abbreviation SMT_Unigram Hunspell
+
+#none, soft, hard
+[Filter]
+filter=none
+filter_lm =../static/preclassifier/
+
+[Language]
+ln=en
+
+
+#set this to True to keep the phrase tables
+[Development]
+dev = False
+

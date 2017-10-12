@@ -1,0 +1,208 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+import sys
+sys.path.insert(0, '/mount/projekte/sfb-732/inf/users/sarah/gits/Norm/NoUGaT/norm/')
+sys.path.insert(0, 'hocr/hocr_parser')
+import urllib2
+import re
+import os
+import codecs
+import logging
+import util
+import subprocess
+import configparser
+import json
+import requests
+from requests.auth import HTTPBasicAuth
+import lxml
+from prepro.rewrite import Rewrite
+from data import Text
+from normalizer import Normalizer
+from parser import HOCRDocument
+os.system("export LD_LIBRARY_PATH=/mount/projekte/sfb-732/inf/users/sarah/tools/xmlrpc-c/lib")
+
+
+#input file name in pdf format
+os.environ["TESSDATA_PREFIX"] = '/usr/share/tesseract/'
+print os.environ["TESSDATA_PREFIX"]
+#os.system("export TESSDATA_PREFIX='/usr/share/tesseract/'")
+pdf = sys.argv[1]
+pdf = pdf.replace(" ","\ ")
+font = sys.argv[2]
+ini_Nougat= sys.argv[3]
+
+os.system("mkdir "+pdf[:-4])
+tif_dir = pdf[:-4]+'/tif/'
+os.system("mkdir "+tif_dir)
+
+p_convert = subprocess.Popen(["convert", "-density" ,"300", pdf, tif_dir+"page_%04d.tif"])
+
+out, error = p_convert.communicate()
+hocr_dir = pdf[:-4]+'/tess-hocr/'
+os.system("mkdir "+hocr_dir)
+os.system("mkdir "+pdf[:-4]+'/tess-txt/')
+for page in os.listdir(tif_dir.replace("\\"," ")):
+    p = subprocess.Popen(["tesseract","-l",font,tif_dir+'/'+page,hocr_dir+page[:-4],'hocr'])
+    out,error = p.communicate()
+for hocr in os.listdir(hocr_dir.replace("\\"," ")):
+    if hocr[-4:] =="hocr":
+        print hocr
+        document = HOCRDocument(hocr_dir.replace("\\"," ")+'/'+hocr, is_path=True)
+        pagelines=[]
+        assert document.npages == 1
+        page = document.pages[0]
+        #assert page.parent == document
+        #assert page.coordinates == (0, 0, 545, 771)
+        #assert page.id == 'page_1'
+        #assert page.nareas == 3
+        for area in page.areas:
+            #assert area.parent == page
+            #assert area.coordinates == (83, 68, 449, 376)
+            #assert area.nparagraphs == 2
+            #assert area.paragraphs[0].lines[0].nwords == 1
+            #assert area.paragraphs[0].lines[0].ocr_text == area.paragraphs[0].lines[0].words[0].ocr_text == "|"
+            for paragraph in area.paragraphs:
+                for l in  paragraph.lines:
+                    pagelines.append(l.ocr_text)
+
+       
+        #dummy here actually NoUGaT
+           
+        config = configparser.ConfigParser()
+        config.read(ini_Nougat)
+        logger = logging.getLogger('norm')
+        logger.setLevel(logging.DEBUG)
+        hdlr = logging.FileHandler(util.logfile+"_"+sys.argv[2].split("/")[-1])
+        formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+        hdlr.setFormatter(formatter)
+        logger.addHandler(hdlr)
+        try:
+            language = config.get("Language", "ln")
+            SMT_token =config.get("SMT", "Token")
+            SMT_token2 =config.get("SMT", "Token2")
+            SMT_unigram=config.get("SMT", "Unigram")
+            SMT_unigram2=config.get("SMT", "Unigram2")
+            SMT_bigram=config.get("SMT", "Bigram")
+            SMT_decision=config.get("SMT","Decision")
+            MOSES_PATH=config.get("MOSES-PATH", "Moses")
+            MOSES_SERVER=config.get("MOSES-PATH", "Mosesserver")
+            CRF_PATH=config.get("CRF-PATH", "CRF")
+            KENLM_PATH=config.get("LM-PATH", "LM")
+            SETTING=config.get("SETTING", "train_set")
+            LM_PATH=config.get("LM","lm")
+            modules_string = config.get("Modules","mod")
+            modules = modules_string.split()
+            filtering = config.get("Filter","filter")
+            if filtering != "none":
+                LM_MODEL=config.get("Filter","filter_lm")
+            else:
+                LM_MODEL="no model"
+            dev = config.get("Development","dev")
+            NNfile = config.get("NN","path")
+            
+
+        except configparser.NoOptionError:
+            raise
+        
+        try:
+            n = Normalizer(filtering,LM_MODEL,language,SMT_token,SMT_token2, SMT_unigram, SMT_unigram2, SMT_bigram, SMT_decision, MOSES_PATH, MOSES_SERVER,CRF_PATH, LM_PATH, SETTING, modules,dev,NNfile,KENLM_PATH)
+            pids = n.start_server_mode()
+
+
+
+            #rewrite object
+
+
+            r = Rewrite(n)
+
+            normalized=[]
+
+            inputlines=[]
+
+            list_of_lines = [Text(sms,n,r) for sms in pagelines]
+            print "prepro laeuft"
+            #sentlist = [Text(sms,n,r).text_orig.strip() for line in pagelines]
+            print "text objects created"
+            #entire_text = '\n'.join(sentlist)
+            #n.init_lm(entire_text)
+            
+            for num,line in enumerate(list_of_lines):# in the case of multiple texts
+            #empty line in input
+                if line.text_orig.strip() ==u"":
+                    line.text_norm = u"\n"
+                    normalized.append([])
+                else:
+                    print "normalizing"
+                    line.text_norm = n.normalize_text(line,{})
+                    print "normline"
+                    print line.text_norm
+                    print "resultlist"
+                    print n.res_decision
+                    normalized.append(n.res_decision)
+                    n.sentcount+=1
+               
+              
+        except Exception as es:
+            print str(es)
+            print 'killed'
+            # First, try and kill the servers (if they had been started)
+            n._kill_server_mode(pids)
+            sys.exit()
+           
+           
+           
+           
+        with open('log_corr_pipeline.txt', 'w') as outfile:
+            json.dump(normalized, outfile)
+        linecounter = 0
+        reminder_ori=''
+        reminder_tgt=''
+        for aind,area in enumerate(page.areas):
+            for pind,paragraph in enumerate(area.paragraphs):
+                for lind,l in  enumerate(paragraph.lines):
+                    print l.ocr_text
+                    print l.nwords
+                    normline = normalized[linecounter]
+                    print normline
+
+                    wind=0
+                    normind=0
+                    while wind < l.nwords:
+                        if l.words[wind].ocr_text.strip() =='':
+                            continue
+                        if reminder_ori!='':
+                            #[gegen über,[gegenüber]]
+                            word=reminder_ori+l.words[wind].ocr_text
+        
+                        else:
+                            word= l.words[wind].ocr_text
+                        if reminder_tgt !='':
+                            corr=reminder_tgt+normline[normind][0]
+                        else:
+                            corr=normline[normind][0]
+                        print word
+                        print corr
+                        if word == corr:
+                            document.pages[0].areas[aind].paragraphs[pind].lines[lind].words[wind]._hocr_html.string = corr
+                            reminder_ori=''
+                            reminder_tgt=''
+                            wind+=1
+                            normind+=1
+                        else:
+                            if len(word) < len(corr):
+                                reminder_ori+=document.pages[0].areas[aind].paragraphs[pind].lines[lind].words[wind].ocr_text+' '
+                                document.pages[0].areas[aind].paragraphs[pind].lines[lind].words[wind]._hocr_html.string  = ''
+                                wind+=1
+                            elif len(word) > len(corr):
+                                reminder_tgt+=normline[normind][0]
+                                normind+=1
+                    linecounter+=1
+                                
+
+
+
+
+        with open(hocr[:-4]+"precorr.hocr", "w") as file:
+            file.write(str(document.html()))
+
+
